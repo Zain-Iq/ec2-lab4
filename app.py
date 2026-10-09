@@ -158,6 +158,8 @@ with st.expander('T2 and T3 price comparison'):
     st.dataframe(comparison_sorted.head(10), hide_index=True)
 
 st.subheader('EC2 On-Demand Cost Prediction Model')
+st.caption('Regression uses records within the Part 1 On-Demand IQR bounds. '
+           'The full dataset remains in the cost analysis above.')
 with st.expander('Feature preparation and model details'):
     st.write('Numeric features')
     # Work on a separate copy so the Part 1 data stays available.
@@ -181,9 +183,24 @@ with st.expander('Feature preparation and model details'):
     st.caption('Only the target and two predictor columns must be complete. '
                'Other price columns can still contain missing values.')
 
+    st.write('Remove On-Demand cost outliers before regression')
+    # Apply the same IQR rule used in Part 1 to the regression dataset.
+    # This additional step reproduces the supplied reference chart and prediction.
+    regression_q1 = data['On Demand'].quantile(0.25)
+    regression_q3 = data['On Demand'].quantile(0.75)
+    regression_iqr = regression_q3 - regression_q1
+    regression_lower = regression_q1 - 1.5 * regression_iqr
+    regression_upper = regression_q3 + 1.5 * regression_iqr
+    regression_filtered = data_cleaned[
+        data_cleaned['On Demand'].between(regression_lower, regression_upper)
+    ].copy()
+    st.write(f'Price bounds: ${regression_lower:.4f} to ${regression_upper:.4f} per hour')
+    st.write(f'Outliers excluded: {len(data_cleaned) - len(regression_filtered)}; '
+             f'rows used for regression: {len(regression_filtered)}')
+
     st.write('Training and testing split')
-    X = data_cleaned[['Instance Memory', 'vCPUs']]
-    y = data_cleaned['On Demand']
+    X = regression_filtered[['Instance Memory', 'vCPUs']]
+    y = regression_filtered['On Demand']
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42
     )
@@ -220,12 +237,13 @@ st.caption('MAE and RMSE are in dollars per hour; MSE is in squared dollars per 
 
 st.subheader('Actual vs Predicted On-Demand Costs')
 fig, ax = plt.subplots(figsize=(8, 6))
+ax.grid(False)
 ax.scatter(y_test, y_pred, alpha=0.7, color='b')
 ax.plot([min(y_test), max(y_test)], [min(y_test), max(y_test)],
         color='red', linestyle='--')
 ax.set_title('Actual vs Predicted On-Demand Costs')
-ax.set_xlabel('Actual On-Demand Cost ($/hour)')
-ax.set_ylabel('Predicted On-Demand Cost ($/hour)')
+ax.set_xlabel('Actual On-Demand Cost')
+ax.set_ylabel('Predicted On-Demand Cost')
 fig.tight_layout()
 st.pyplot(fig)
 plt.close(fig)
@@ -242,7 +260,7 @@ with st.form('cost_prediction'):
 if submitted:
     new_instance = pd.DataFrame([[memory, vcpus]], columns=X.columns)
     predicted_cost = model.predict(new_instance)[0]
-    st.metric('Predicted On-Demand cost ($/hour)', f'{predicted_cost:.4f}')
+    st.write(f'Predicted On-Demand Cost: ${predicted_cost:.4f} per hour')
     if predicted_cost < 0:
         st.warning('This negative prediction is not a valid EC2 price. '
                    'The instructed linear model is not constrained to positive values. '
